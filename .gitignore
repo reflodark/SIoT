@@ -1,0 +1,23 @@
+# Dependencies
+/bin/
+/obj/
+
+# User-specific files
+*.user
+*.userosscache
+*.suo
+
+# Build results
+[Dd]ebug/
+[Dd]ebugPublic/
+[Rr]elease/
+[Rr]eleases/
+x64/
+x86/
+build/
+Build/
+bld/
+
+# Visual Studio
+.vs/
+ProjectSite/
