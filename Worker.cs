@@ -52,23 +52,23 @@ public class Worker : BackgroundService
 
         await _mqttClient.StartAsync(options);
         await _mqttClient.SubscribeAsync(mqttConfig["SubscribeTopic"]);
+
         _logger.LogInformation("MQTT Client connected and listening on topic: {Topic}", mqttConfig["SubscribeTopic"]);
     }
 
-     private async Task SetupSignalRConnection(CancellationToken stoppingToken)
+    private async Task SetupSignalRConnection(CancellationToken stoppingToken)
     {
         var hubUrl = _config.GetValue<string>("SignalR:HubUrl");
         _hubConnection = new HubConnectionBuilder()
             .WithUrl(hubUrl!)
             .WithAutomaticReconnect() // Handles reconnections
             .Build();
-        
-        // Handler for commands from the SignalR Hub (IT -> OT)
-        _hubConnection.On<string, string>("SendCommandToDevice", async (deviceId, command) =>
+
+        _hubConnection.On<string, string>("SendDataToSIoT", async (deviceId, command) =>
         {
             await SendCommandViaMqtt(deviceId, command);
         });
-        
+
         try
         {
             await _hubConnection.StartAsync(stoppingToken);
@@ -84,14 +84,14 @@ public class Worker : BackgroundService
     {
         var topic = e.ApplicationMessage.Topic;
         var payload = Encoding.UTF8.GetString(e.ApplicationMessage.PayloadSegment);
-        
+
         _logger.LogInformation("Message received from MQTT. Topic: {Topic}, Payload: {Payload}", topic, payload);
-        
+
         if (_hubConnection?.State == HubConnectionState.Connected)
         {
             try
             {
-                await _hubConnection.InvokeAsync("ReceiveDeviceData", topic, payload);
+                await _hubConnection.InvokeAsync("ReceiveDataFromSIoT", topic, payload);
             }
             catch (Exception ex)
             {
@@ -108,7 +108,8 @@ public class Worker : BackgroundService
             return;
         }
 
-        var commandTopic = $"devices/{deviceId}/command";
+        var mqttConfig = _config.GetSection("Mqtt");
+        var commandTopic = mqttConfig["PublishTopic"];
         var message = new MqttApplicationMessageBuilder()
             .WithTopic(commandTopic)
             .WithPayload(command)
@@ -118,7 +119,7 @@ public class Worker : BackgroundService
         await _mqttClient.EnqueueAsync(message);
         _logger.LogInformation("Command sent to device {DeviceId} via topic {Topic}.", deviceId, commandTopic);
     }
-    
+
     public override async Task StopAsync(CancellationToken cancellationToken)
     {
         if (_mqttClient != null)
