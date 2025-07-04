@@ -24,13 +24,13 @@ public class Worker : BackgroundService
 
         await SetupMqttClient(stoppingToken);
 
-        while (!stoppingToken.IsCancellationRequested)
+        try
         {
-            if (_logger.IsEnabled(LogLevel.Information))
-            {
-                _logger.LogInformation("Worker running at: {time}", DateTimeOffset.Now);
-            }
-            await Task.Delay(1000, stoppingToken);
+            await Task.Delay(Timeout.Infinite, stoppingToken);
+        }
+        catch (TaskCanceledException)
+        {
+            _logger.LogInformation("Service stopped.");
         }
     }
 
@@ -50,9 +50,16 @@ public class Worker : BackgroundService
 
         _mqttClient.ApplicationMessageReceivedAsync += OnMqttMessageReceived;
 
-        await _mqttClient.StartAsync(options);
-        await _mqttClient.SubscribeAsync(mqttConfig["SubscribeTopic"]);
-
+        try
+        {
+            await _mqttClient.StartAsync(options);
+            await _mqttClient.SubscribeAsync(mqttConfig["SubscribeTopic"]);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error connecting to MQTT broker.");
+            return;
+        }
         _logger.LogInformation("MQTT Client connected and listening on topic: {Topic}", mqttConfig["SubscribeTopic"]);
     }
 
@@ -64,7 +71,15 @@ public class Worker : BackgroundService
             .WithAutomaticReconnect() // Handles reconnections
             .Build();
 
-        _hubConnection.On<string, string>("SendDataToSIoT", async (deviceId, command) =>
+        // Handle reconnections
+        _hubConnection.Closed += async (exception) =>
+        {
+            await Task.Delay(new Random().Next(1, 5) * 1000);
+            await _hubConnection.StartAsync(stoppingToken);
+        };
+
+        // Handle incoming messages
+        _hubConnection.On<string, string>("ReceiveMessage", async (deviceId, command) =>
         {
             await SendCommandViaMqtt(deviceId, command);
         });
@@ -91,7 +106,7 @@ public class Worker : BackgroundService
         {
             try
             {
-                await _hubConnection.InvokeAsync("ReceiveDataFromSIoT", topic, payload);
+                await _hubConnection.InvokeAsync("SendMessage", topic, payload);
             }
             catch (Exception ex)
             {
@@ -108,8 +123,7 @@ public class Worker : BackgroundService
             return;
         }
 
-        var mqttConfig = _config.GetSection("Mqtt");
-        var commandTopic = mqttConfig["PublishTopic"];
+        var commandTopic = _config.GetValue<string>("Mqtt:PublishTopic");
         var message = new MqttApplicationMessageBuilder()
             .WithTopic(commandTopic)
             .WithPayload(command)
@@ -132,5 +146,20 @@ public class Worker : BackgroundService
             await _hubConnection.DisposeAsync();
         }
         await base.StopAsync(cancellationToken);
+    }
+
+    public async Task SendTastDataToSignalRServer()
+    {
+        if (_hubConnection?.State == HubConnectionState.Connected)
+        {
+            try
+            {
+                await _hubConnection.InvokeAsync("SendMessage", "test", "test");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error sending data to the SignalR Hub.");
+            }
+        }
     }
 }
