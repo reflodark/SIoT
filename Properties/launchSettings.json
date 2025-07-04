@@ -4,6 +4,7 @@
     "SIoT": {
       "commandName": "Project",
       "dotnetRunMessages": true,
+      "applicationUrl": "https://localhost:7251",
       "environmentVariables": {
         "DOTNET_ENVIRONMENT": "Development"
       }

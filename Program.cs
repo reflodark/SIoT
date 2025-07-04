@@ -1,7 +1,21 @@
 using SIoT;
 
-var builder = Host.CreateApplicationBuilder(args);
+var builder = WebApplication.CreateBuilder(args);
+builder.Services.AddSignalR();
 builder.Services.AddHostedService<Worker>();
 
-var host = builder.Build();
-host.Run();
+
+var app = builder.Build();
+
+if (app.Environment.IsDevelopment())
+{
+    app.UseDeveloperExceptionPage();
+}
+
+app.UseHttpsRedirection();
+
+app.UseRouting();
+
+app.MapHub<SIoTHub>("/SIoTHub");
+
+app.Run();

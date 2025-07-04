@@ -9,31 +9,41 @@ public class Worker : BackgroundService
 {
     private readonly ILogger<Worker> _logger;
     private readonly IConfiguration _config;
+    private readonly IHostApplicationLifetime _appLifetime;
     private IManagedMqttClient? _mqttClient;
     private HubConnection? _hubConnection;
-
-    public Worker(ILogger<Worker> logger, IConfiguration config)
+    
+    public Worker(ILogger<Worker> logger, IConfiguration config, IHostApplicationLifetime appLifetime)
     {
         _logger = logger;
         _config = config;
+        _appLifetime = appLifetime;
     }
 
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    protected async override Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        await SetupSignalRConnection(stoppingToken);
-
-        await SetupMqttClient(stoppingToken);
-
-        try
+        // Make sure that the SignalR hub starts first
+        _appLifetime.ApplicationStarted.Register(() =>
         {
-            await Task.Delay(Timeout.Infinite, stoppingToken);
-        }
-        catch (TaskCanceledException)
-        {
-            _logger.LogInformation("Service stopped.");
-        }
+            _logger.LogInformation("Application has started. Worker is now starting its main logic.");
+
+            Task.Run(async () =>
+                {
+                    await SetupSignalRConnection(stoppingToken);
+
+                    await SetupMqttClient(stoppingToken);
+                    
+                    try
+                    {
+                        await Task.Delay(Timeout.Infinite, stoppingToken);
+                    }
+                    catch (TaskCanceledException)
+                    {
+                        _logger.LogInformation("Service stopped.");
+                    }
+                });
+        });
     }
-
     private async Task SetupMqttClient(CancellationToken stoppingToken)
     {
         var mqttConfig = _config.GetSection("Mqtt");
@@ -70,13 +80,6 @@ public class Worker : BackgroundService
             .WithUrl(hubUrl!)
             .WithAutomaticReconnect() // Handles reconnections
             .Build();
-
-        // Handle reconnections
-        _hubConnection.Closed += async (exception) =>
-        {
-            await Task.Delay(new Random().Next(1, 5) * 1000);
-            await _hubConnection.StartAsync(stoppingToken);
-        };
 
         // Handle incoming messages
         _hubConnection.On<string, string>("ReceiveMessage", async (deviceId, command) =>
